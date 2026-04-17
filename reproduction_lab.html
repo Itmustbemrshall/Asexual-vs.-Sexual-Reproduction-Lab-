@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Reproduction Showdown</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #f5f4f0; font-family: system-ui, -apple-system, sans-serif; }
+  #root { min-height: 100vh; }
+  @keyframes purpleDie {
+    0%   { transform: scale(1);   opacity: 1;   background: #7F77DD; }
+    15%  { transform: scale(1);   opacity: 0.1; background: #E24B4A; }
+    30%  { transform: scale(1);   opacity: 1;   background: #E24B4A; }
+    45%  { transform: scale(1);   opacity: 0.1; background: #E24B4A; }
+    60%  { transform: scale(1);   opacity: 1;   background: #E24B4A; }
+    78%  { transform: scale(1.5); opacity: 1;   background: #E24B4A; }
+    100% { transform: scale(0);   opacity: 0; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+// ── Colours ──────────────────────────────────────────────────
+const C = {
+  bg:        "#ffffff",
+  bgSec:     "#f5f4f0",
+  bgTer:     "#e8e7e3",
+  border:    "rgba(0,0,0,0.12)",
+  borderMid: "rgba(0,0,0,0.25)",
+  text:      "#1c1c1a",
+  textSec:   "#5f5e5a",
+  textTer:   "#888780",
+};
+
+const ORG_COLORS = {
+  purple: { bg: "#7F77DD", border: "#534AB7" },
+  blue:   { bg: "#378ADD", border: "#185FA5" },
+  red:    { bg: "#D85A30", border: "#993C1D" },
+};
+
+const DICE_TABLE = {
+  1: { label: "No offspring",              count: 0, choose: false, colors: [] },
+  2: { label: "Triplets — pick 3 colors",  count: 3, choose: true,  colors: [] },
+  3: { label: "One red offspring",         count: 1, choose: false, colors: ["red"] },
+  4: { label: "One blue offspring",        count: 1, choose: false, colors: ["blue"] },
+  5: { label: "One purple offspring",      count: 1, choose: false, colors: ["purple"] },
+  6: { label: "Twins — pick 2 colors",     count: 2, choose: true,  colors: [] },
+};
+
+const MAX_VIS = 1500;
+const rollDie = () => Math.floor(Math.random() * 6) + 1;
+let _uid = 0;
+const mkOrg = (color) => ({ id: _uid++, color, isNew: true });
+
+const getValidPairs = (orgs) => {
+  const reds    = orgs.filter(o => o.color === "red");
+  const blues   = orgs.filter(o => o.color === "blue");
+  const purples = orgs.filter(o => o.color === "purple");
+  const n = Math.min(reds.length, blues.length);
+  return {
+    pairs:     reds.slice(0, n).map((r, i) => [r, blues[i]]),
+    nonMating: [...reds.slice(n), ...blues.slice(n), ...purples],
+  };
+};
+
+// ── Sub-components ───────────────────────────────────────────
+function Blob({ color, size = 22, isNew = false }) {
+  const [pop, setPop] = useState(false);
+  useEffect(() => {
+    if (isNew) {
+      setPop(true);
+      const t = setTimeout(() => setPop(false), 450);
+      return () => clearTimeout(t);
+    }
+  }, []);
+  const c = ORG_COLORS[color];
+  return (
+    <span style={{
+      display: "inline-block", width: size, height: size, borderRadius: "50%",
+      background: c.bg, border: `2px solid ${c.border}`, flexShrink: 0,
+      transform: pop ? "scale(1.6)" : "scale(1)",
+      transition: "transform 0.35s cubic-bezier(.34,1.56,.64,1)",
+    }} />
+  );
+}
+
+function PopGrid({ orgs, total }) {
+  const vis  = orgs.slice(0, MAX_VIS);
+  const extra = total - vis.length;
+  const sz  = total <= 16  ? 30 : total <= 50  ? 22 : total <= 150 ? 14
+             : total <= 400 ? 9  : total <= 900 ? 6  : 5;
+  const gap = sz <= 6 ? 1 : sz <= 9 ? 2 : 4;
+  return (
+    <div style={{ display:"flex", flexWrap:"wrap", gap, minHeight:72, alignContent:"flex-start", padding:"6px 0" }}>
+      {vis.map(o => <Blob key={o.id} color={o.color} size={sz} isNew={o.isNew} />)}
+      {extra > 0 && (
+        <span style={{ background:"#888780", color:"#F1EFE8", borderRadius:12, padding:"2px 10px", fontSize:12, fontWeight:500, alignSelf:"center" }}>
+          +{extra.toLocaleString()} more
+        </span>
+      )}
+      {total === 0 && <span style={{ fontSize:13, color:"#888780", fontStyle:"italic" }}>Population extinct</span>}
+    </div>
+  );
+}
+
+function DieFace({ value, size = 52 }) {
+  const pts = {
+    1:[[50,50]],
+    2:[[28,28],[72,72]],
+    3:[[28,28],[50,50],[72,72]],
+    4:[[28,28],[72,28],[28,72],[72,72]],
+    5:[[28,28],[72,28],[50,50],[28,72],[72,72]],
+    6:[[28,28],[72,28],[28,50],[72,50],[28,72],[72,72]],
+  };
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100">
+      <rect x="5" y="5" width="90" height="90" rx="16" fill="white" stroke="#444441" strokeWidth="4"/>
+      {(pts[value]||[]).map(([x,y],i) => <circle key={i} cx={x} cy={y} r="9" fill="#2C2C2A"/>)}
+    </svg>
+  );
+}
+
+function SpinDie({ size = 52 }) {
+  const [face, setFace] = useState(1);
+  useEffect(() => {
+    const t = setInterval(() => setFace(Math.floor(Math.random()*6)+1), 90);
+    return () => clearInterval(t);
+  }, []);
+  return <DieFace value={face} size={size} />;
+}
+
+function DataTables({ genLog }) {
+  const fmtN = (n) => (n == null) ? "" : n.toLocaleString();
+  const hasSeen9  = genLog.some(r => r.gen === 9);
+  const getRow    = (g) => genLog.find(r => r.gen === g) || null;
+  const currentGen = Math.max(...genLog.map(r => r.gen));
+  const ob = "1.5px solid #5F5E5A";
+  const ib = "1px solid #B4B2A9";
+  const thSt = { padding:"7px 10px", border:ib, background:"#D3D1C7", color:"#2C2C2A", fontWeight:500, fontSize:12, textAlign:"center", whiteSpace:"nowrap" };
+  const genTd = (a) => ({ padding:"7px 8px", border:ib, textAlign:"center", fontWeight:500, fontSize:13, color:"#2C2C2A", background:a?"#EEEDFE":"transparent", width:38 });
+  const dataTd = (a) => ({ padding:"7px 10px", border:ib, textAlign:"right", fontSize:13, color:"#2C2C2A", minWidth:72, background:a?"#EEEDFE":"transparent" });
+  const evTd = { padding:"7px 10px", border:ib, background:"#FCEBEB", color:"#791F1F", fontWeight:500, fontSize:12, textAlign:"center" };
+
+  const renderTable = (label, color, fk, ok, tk) => (
+    <div style={{ flex:1, minWidth:0 }}>
+      <p style={{ fontWeight:500, fontSize:13, color, marginBottom:6 }}>{label}</p>
+      <div style={{ border:ob, borderRadius:4, overflow:"hidden" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse" }}>
+          <thead>
+            <tr>
+              <th style={thSt}>Gen.</th>
+              <th style={thSt}>From previous year</th>
+              <th style={thSt}>Offspring</th>
+              <th style={thSt}>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[1,2,3,4,5,6,7,8,9].map(g => {
+              const row = getRow(g);
+              const a = g === currentGen;
+              return (
+                <tr key={g} style={{ background: g%2===0 ? "#F1EFE8" : "white" }}>
+                  <td style={genTd(a)}>{g}</td>
+                  <td style={dataTd(a)}>{row ? fmtN(row[fk]) : ""}</td>
+                  <td style={dataTd(a)}>{row ? fmtN(row[ok]) : ""}</td>
+                  <td style={{ ...dataTd(a), fontWeight:500 }}>{row ? fmtN(row[tk]) : ""}</td>
+                </tr>
+              );
+            })}
+            {hasSeen9 && <tr><td colSpan={4} style={evTd}>Special Event: Disease wipes out all purple organisms!</td></tr>}
+            {(() => {
+              const row = getRow(10);
+              const a = currentGen === 10;
+              return (
+                <tr style={{ background:"white" }}>
+                  <td style={genTd(a)}>10</td>
+                  <td style={dataTd(a)}>{row ? fmtN(row[fk]) : ""}</td>
+                  <td style={dataTd(a)}>{row ? fmtN(row[ok]) : ""}</td>
+                  <td style={{ ...dataTd(a), fontWeight:500 }}>{row ? fmtN(row[tk]) : ""}</td>
+                </tr>
+              );
+            })()}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ display:"flex", gap:16, alignItems:"flex-start" }}>
+      {renderTable("Asexual Population","#3C3489","aFrom","aOff","aTotal")}
+      {renderTable("Sexual Population", "#0C447C","sFrom","sOff","sTotal")}
+    </div>
+  );
+}
+
+// ── Style helpers ────────────────────────────────────────────
+const card = { background:C.bg, borderRadius:16, border:`0.5px solid ${C.border}`, padding:"20px 24px" };
+const btn  = (bg, fg="white") => ({ background:bg, color:fg, border:"none", borderRadius:12, padding:"12px 28px", fontSize:15, fontWeight:500, cursor:"pointer", width:"100%" });
+
+// ── Main app ─────────────────────────────────────────────────
+function ReproductionLab() {
+  const [phase,   setPhase]   = useState("intro");
+  const [gen,     setGen]     = useState(1);
+  const [aCount,  setACount]  = useState(4);
+  const [aOrgs,   setAOrgs]   = useState(() => Array(4).fill(null).map(()=>({...mkOrg("purple"),isNew:false})));
+  const [sOrgs,   setSOrgs]   = useState(() => [
+    {...mkOrg("red"),isNew:false},{...mkOrg("blue"),isNew:false},
+    {...mkOrg("red"),isNew:false},{...mkOrg("blue"),isNew:false},
+  ]);
+  const [genLog,  setGenLog]  = useState([{gen:1,aFrom:null,aOff:null,aTotal:4,sFrom:null,sOff:null,sTotal:4}]);
+  const [singleRoll,   setSingleRoll]   = useState(null);
+  const [rollSummary,  setRollSummary]  = useState(null);
+  const [spinning,     setSpinning]     = useState(false);
+  const [pendingOff,   setPendingOff]   = useState([]);
+  const [curPick,      setCurPick]      = useState(null);
+  const [pickCtx,      setPickCtx]      = useState(null);
+  const [survivors,    setSurvivors]    = useState(null);
+  const [diseasePhase, setDiseasePhase] = useState("pre");
+
+  const makeADisplay = (count, prev) => {
+    const n = Math.min(count, MAX_VIS);
+    return Array(n).fill(null).map((_,i) => i < prev.length ? {...prev[i],isNew:false} : mkOrg("purple"));
+  };
+
+  const processSingleRoll = (roll, numPairs) => {
+    const d = DICE_TABLE[roll];
+    if (numPairs===0||d.count===0) return {direct:[],need:null};
+    if (d.choose) return {direct:[],need:{count:d.count,numPairs,chosen:[]}};
+    const direct=[];
+    for (let i=0;i<numPairs;i++) d.colors.forEach(c=>direct.push(mkOrg(c)));
+    return {direct,need:null};
+  };
+
+  const makeSummary = (roll, numPairs, totalOff, chosenColors) => {
+    if (numPairs===0) return "No red + blue pairs this generation — no offspring produced.";
+    const d = DICE_TABLE[roll];
+    if (d.count===0) return `Rolled a ${roll} — no fertilization. All ${numPairs} pair${numPairs>1?"s":""} produced no offspring.`;
+    const colors = chosenColors||d.colors;
+    const colorStr = colors.map(c=>c.charAt(0).toUpperCase()+c.slice(1)).join(" + ");
+    const offDesc  = d.count===1 ? `1 ${colorStr} offspring` : `${d.count} offspring (${colorStr})`;
+    return `Rolled a ${roll} — each of the ${numPairs} pair${numPairs>1?"s":""} produced ${offDesc}. ${totalOff} new offspring total.`;
+  };
+
+  const finishGen = (nextGen, prevA, newA, prevS, offspring, roll, numPairs, chosenColors) => {
+    const newS = [...prevS.map(o=>({...o,isNew:false})),...offspring];
+    setSOrgs(newS);
+    setGenLog(prev=>[...prev,{gen:nextGen,aFrom:prevA,aOff:prevA,aTotal:newA,sFrom:prevS.length,sOff:offspring.length,sTotal:newS.length}]);
+    setRollSummary(makeSummary(roll,numPairs,offspring.length,chosenColors));
+    setGen(nextGen); setSingleRoll(null); setPendingOff([]); setPickCtx(null); setPhase("playing");
+  };
+
+  const finishGen10 = (surv, offspring, roll, numPairs, chosenColors) => {
+    const newS = [...surv.map(o=>({...o,isNew:false})),...offspring];
+    setSOrgs(newS);
+    setGenLog(prev=>[...prev,{gen:10,specialEvent:true,aFrom:0,aOff:0,aTotal:0,sFrom:surv.length,sOff:offspring.length,sTotal:newS.length}]);
+    setRollSummary(makeSummary(roll,numPairs,offspring.length,chosenColors));
+    setGen(10); setSingleRoll(null); setPendingOff([]); setPickCtx(null); setPhase("done");
+  };
+
+  const handleNextGen = () => {
+    if (phase!=="playing") return;
+    if (gen===9) { setPhase("disease"); return; }
+    const prevA=aCount, prevS=sOrgs, nextGen=gen+1, newA=prevA*2;
+    setACount(newA); setAOrgs(makeADisplay(newA,aOrgs));
+    setSingleRoll(null); setSpinning(true); setPhase("dice");
+    setTimeout(()=>{
+      setSpinning(false);
+      const {pairs}=getValidPairs(prevS);
+      const roll=rollDie(); setSingleRoll(roll);
+      const {direct,need}=processSingleRoll(roll,pairs.length);
+      if (need) {
+        setPendingOff(direct); setCurPick(need);
+        setPickCtx({nextGen,prevA,newA,prevS,roll,numPairs:pairs.length}); setPhase("colorPick");
+      } else {
+        setPendingOff(direct);
+        setPickCtx({nextGen,prevA,newA,prevS,roll,numPairs:pairs.length,chosenColors:null}); setPhase("result");
+      }
+    },1400);
+  };
+
+  const applyDisease = () => {
+    const surv=sOrgs.filter(o=>o.color!=="purple").map(o=>({...o,isNew:false}));
+    setACount(0); setAOrgs([]); setSOrgs(surv); setSurvivors(surv);
+    setDiseasePhase("pre"); setPhase("gen10");
+  };
+
+  const runGen10 = () => {
+    const surv=survivors;
+    setSingleRoll(null); setSpinning(true); setPhase("dice");
+    setTimeout(()=>{
+      setSpinning(false);
+      const {pairs}=getValidPairs(surv);
+      const roll=rollDie(); setSingleRoll(roll);
+      const {direct,need}=processSingleRoll(roll,pairs.length);
+      if (need) {
+        setPendingOff(direct); setCurPick(need);
+        setPickCtx({isGen10:true,surv,roll,numPairs:pairs.length}); setPhase("colorPickPost");
+      } else {
+        setPendingOff(direct);
+        setPickCtx({isGen10:true,surv,roll,numPairs:pairs.length,chosenColors:null}); setPhase("result10");
+      }
+    },1400);
+  };
+
+  const pickColor = (color) => {
+    const updated={...curPick,chosen:[...curPick.chosen,color]};
+    if (updated.chosen.length>=updated.count) {
+      const allOff=[...pendingOff];
+      for (let i=0;i<updated.numPairs;i++) updated.chosen.forEach(c=>allOff.push(mkOrg(c)));
+      setCurPick(null); setPendingOff(allOff);
+      setPickCtx(prev=>({...prev,chosenColors:updated.chosen}));
+      setPhase(pickCtx.isGen10?"result10":"result");
+    } else { setCurPick(updated); }
+  };
+
+  const handleContinue = () => {
+    const ctx=pickCtx;
+    if (phase==="result10") finishGen10(ctx.surv,pendingOff,ctx.roll,ctx.numPairs,ctx.chosenColors);
+    else finishGen(ctx.nextGen,ctx.prevA,ctx.newA,ctx.prevS,pendingOff,ctx.roll,ctx.numPairs,ctx.chosenColors);
+  };
+
+  const fmtN = (n) => (n==null)?""  :n.toLocaleString();
+
+  // ── INTRO ───────────────────────────────────────────────────
+  if (phase==="intro") return (
+    <div style={{padding:"2rem",maxWidth:640,margin:"0 auto"}}>
+      <h1 style={{fontSize:24,fontWeight:500,marginBottom:6,color:C.text}}>Reproduction Showdown</h1>
+      <p style={{color:C.textSec,marginBottom:24,fontSize:15}}>Asexual vs. Sexual Reproduction — 10 Generation Lab</p>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:24}}>
+        <div style={{...card,borderLeft:"4px solid #7F77DD"}}>
+          <div style={{display:"flex",gap:6,marginBottom:8}}>
+            {[0,1,2,3].map(i=><Blob key={i} color="purple" size={16}/>)}
+          </div>
+          <p style={{fontWeight:500,color:C.text,marginBottom:4,fontSize:15}}>Asexual Population</p>
+          <p style={{fontSize:13,color:C.textSec,lineHeight:1.5}}>All purple. Every organism produces 1 offspring — the population doubles each generation.</p>
+        </div>
+        <div style={{...card,borderLeft:"4px solid #378ADD"}}>
+          <div style={{display:"flex",gap:6,marginBottom:8,alignItems:"center"}}>
+            <Blob color="red" size={16}/><Blob color="blue" size={16}/>
+            <span style={{fontSize:11,color:C.textTer,margin:"0 4px"}}>+</span>
+            <Blob color="red" size={16}/><Blob color="blue" size={16}/>
+          </div>
+          <p style={{fontWeight:500,color:C.text,marginBottom:4,fontSize:15}}>Sexual Population</p>
+          <p style={{fontSize:13,color:C.textSec,lineHeight:1.5}}>Starts with 2 red + 2 blue. Only a <strong style={{fontWeight:500}}>red + blue pair</strong> can mate. They roll a die for offspring!</p>
+        </div>
+      </div>
+      <button style={{...btn("#534AB7"),fontSize:16,padding:"14px 28px"}} onClick={()=>setPhase("playing")}>Start the Lab</button>
+    </div>
+  );
+
+  // ── DISEASE ─────────────────────────────────────────────────
+  if (phase==="disease") {
+    const blueRedS=sOrgs.filter(o=>o.color!=="purple").length;
+    const isAnim=diseasePhase==="animating", isDone=diseasePhase==="done";
+    const aSz=aCount<=150?14:aCount<=400?9:aCount<=900?6:5;
+    const aGap=aSz<=6?1:aSz<=9?2:4;
+    const sSz=sOrgs.length<=20?22:14;
+    const startAnim=()=>{ setDiseasePhase("animating"); setTimeout(()=>setDiseasePhase("done"),2400); };
+    return (
+      <div style={{padding:"1.5rem 2rem"}}>
+        <div style={{textAlign:"center",marginBottom:20}}>
+          <h1 style={{fontSize:28,fontWeight:500,color:"#A32D2D",marginBottom:6}}>
+            {isDone?"The disease has passed.":"Disease Outbreak!"}
+          </h1>
+          <p style={{fontSize:16,color:"#7F1D1D",lineHeight:1.5}}>
+            {isDone?`All purple organisms are gone. ${blueRedS} blue/red sexual organisms survived.`
+              :"A pathogen targeting purple organisms is sweeping through both populations!"}
+          </p>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:24}}>
+          <div style={{...card,border:"1.5px solid #F09595"}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+              <p style={{fontWeight:500,color:"#3C3489",fontSize:14}}>Asexual — {aCount.toLocaleString()} organisms</p>
+              {isDone&&<span style={{fontSize:13,color:"#A32D2D",fontWeight:500}}>0 survive</span>}
+            </div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:aGap,minHeight:60,alignContent:"flex-start"}}>
+              {aOrgs.map((o,i)=>(
+                <span key={o.id} style={{display:"inline-block",width:aSz,height:aSz,borderRadius:"50%",background:"#7F77DD",border:"1px solid #534AB7",flexShrink:0,
+                  animation:(isAnim||isDone)?`purpleDie 2.2s ease-in ${(i%8)*0.03}s forwards`:"none"}} />
+              ))}
+            </div>
+          </div>
+          <div style={{...card,border:"1.5px solid #F09595"}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+              <p style={{fontWeight:500,color:"#0C447C",fontSize:14}}>Sexual — {sOrgs.length} organisms</p>
+              {isDone&&<span style={{fontSize:13,color:"#065F46",fontWeight:500}}>{blueRedS} survive</span>}
+            </div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:4,minHeight:60,alignContent:"flex-start"}}>
+              {sOrgs.map((o,i)=>(
+                <span key={o.id} style={{display:"inline-block",width:sSz,height:sSz,borderRadius:"50%",
+                  background:ORG_COLORS[o.color].bg,border:`1.5px solid ${ORG_COLORS[o.color].border}`,flexShrink:0,
+                  animation:(o.color==="purple"&&(isAnim||isDone))?`purpleDie 2.2s ease-in ${i*0.04}s forwards`:"none"}} />
+              ))}
+            </div>
+          </div>
+        </div>
+        <div style={{textAlign:"center"}}>
+          {!isAnim&&!isDone&&<button style={{...btn("#A32D2D"),width:"auto",padding:"14px 36px",fontSize:16}} onClick={startAnim}>Watch what happens →</button>}
+          {isAnim&&<p style={{fontSize:16,color:"#A32D2D",fontWeight:500}}>The disease is spreading...</p>}
+          {isDone&&<button style={{...btn("#185FA5"),width:"auto",padding:"14px 36px",fontSize:16}} onClick={applyDisease}>Continue to Generation 10 →</button>}
+        </div>
+      </div>
+    );
+  }
+
+  // ── GEN 10 ──────────────────────────────────────────────────
+  if (phase==="gen10") {
+    const surv=survivors||[];
+    return (
+      <div style={{padding:"2rem",maxWidth:540,margin:"0 auto"}}>
+        <div style={card}>
+          <h2 style={{fontSize:20,fontWeight:500,color:C.text,marginBottom:6}}>Generation 10 — After the Disease</h2>
+          <p style={{fontSize:14,color:C.textSec,marginBottom:20}}>Here's who survived to reproduce:</p>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
+            <div style={{background:"#EEEDFE",borderRadius:10,padding:16}}>
+              <p style={{fontWeight:500,color:"#3C3489",marginBottom:4,fontSize:14}}>Asexual</p>
+              <p style={{fontSize:24,fontWeight:500,color:"#A32D2D"}}>0</p>
+              <p style={{fontSize:12,color:"#534AB7",lineHeight:1.4}}>Extinct — no genetic diversity to resist the disease.</p>
+            </div>
+            <div style={{background:"#E6F1FB",borderRadius:10,padding:16}}>
+              <p style={{fontWeight:500,color:"#0C447C",marginBottom:4,fontSize:14}}>Sexual</p>
+              <p style={{fontSize:24,fontWeight:500,color:"#0C447C"}}>{surv.length}</p>
+              <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:6}}>
+                {surv.slice(0,20).map(o=><Blob key={o.id} color={o.color} size={16}/>)}
+              </div>
+            </div>
+          </div>
+          <button style={btn("#185FA5")} onClick={runGen10}>Reproduce Generation 10</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── COLOR PICK ──────────────────────────────────────────────
+  if (phase==="colorPick"||phase==="colorPickPost") {
+    const needed=curPick?.count||0, numPairs=curPick?.numPairs||1;
+    const chosen=curPick?.chosen||[], remaining=needed-chosen.length;
+    return (
+      <div style={{padding:"2rem",maxWidth:440,margin:"0 auto"}}>
+        <div style={card}>
+          <h2 style={{fontSize:18,fontWeight:500,color:C.text,marginBottom:4}}>{needed===3?"Triplets!":"Twins!"}</h2>
+          <p style={{fontSize:14,color:C.textSec,marginBottom:6,lineHeight:1.5}}>
+            Choose {remaining} more color{remaining!==1?"s":""}. This applies to all {numPairs} pair{numPairs!==1?"s":""} — each pair gets the same {needed} offspring.
+          </p>
+          <p style={{fontSize:12,color:C.textTer,marginBottom:20}}>{needed*numPairs} new organisms total</p>
+          <div style={{display:"flex",gap:6,marginBottom:24,minHeight:34}}>
+            {chosen.map((c,i)=><Blob key={i} color={c} size={30} isNew/>)}
+            {Array(remaining).fill(null).map((_,i)=>(
+              <span key={i} style={{width:30,height:30,borderRadius:"50%",border:`2px dashed ${C.borderMid}`,display:"inline-block"}}/>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            {["purple","blue","red"].map(c=>(
+              <button key={c} onClick={()=>pickColor(c)} style={{flex:1,background:ORG_COLORS[c].bg,color:"white",border:"none",borderRadius:10,padding:"12px 8px",cursor:"pointer",fontSize:13,fontWeight:500,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                <Blob color={c} size={14}/>{c.charAt(0).toUpperCase()+c.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── RESULT ──────────────────────────────────────────────────
+  if (phase==="result"||phase==="result10") {
+    const ctx=pickCtx||{}, roll=ctx.roll, numPairs=ctx.numPairs||0;
+    const offspring=pendingOff, d=roll?DICE_TABLE[roll]:null;
+    const noOff=!roll||numPairs===0||(d&&d.count===0);
+    const colors=ctx.chosenColors||(d?d.colors:[]);
+    const colorLabel=c=>c.charAt(0).toUpperCase()+c.slice(1);
+    const uColors=[...new Set(colors)];
+    const accent=noOff?"#A32D2D":"#3B6D11", bg=noOff?"#FCEBEB":"#EAF3DE", border=noOff?"#F09595":"#C0DD97";
+    const nextLabel=(ctx.nextGen||10)+1<=10?(ctx.nextGen||10):"done";
+    return (
+      <div style={{padding:"1.5rem 2rem",maxWidth:700,margin:"0 auto"}}>
+        <div style={{background:bg,border:`2px solid ${border}`,borderRadius:16,padding:"18px 24px",marginBottom:16}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
+            <div>
+              <p style={{fontSize:12,fontWeight:500,color:accent,textTransform:"uppercase",letterSpacing:"0.06em",margin:"0 0 4px"}}>Generation {ctx.nextGen||10} Results</p>
+              <h1 style={{fontSize:28,fontWeight:500,color:accent,margin:0}}>{roll?`You rolled a ${roll}!`:"No mating pairs"}</h1>
+            </div>
+            {roll&&<DieFace value={roll} size={72}/>}
+          </div>
+        </div>
+        <div style={{background:bg,border:`2px solid ${border}`,borderRadius:16,padding:"18px 24px",marginBottom:16}}>
+          {noOff?(
+            <p style={{fontSize:20,color:accent,margin:0,lineHeight:1.5}}>
+              {numPairs===0?"No red + blue pairs existed, so no offspring were produced."
+                :`No fertilization this round. All ${numPairs} pair${numPairs!==1?"s":""} produced 0 offspring.`}
+            </p>
+          ):(
+            <div style={{display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
+              <div style={{flex:1}}>
+                <p style={{fontSize:18,color:accent,margin:"0 0 8px",lineHeight:1.5}}>
+                  Each of the <strong style={{fontWeight:500}}>{numPairs} pair{numPairs!==1?"s":""}</strong> produced{" "}
+                  <strong style={{fontWeight:500}}>
+                    {d&&d.count===1?`1 ${colorLabel(colors[0])} offspring`:`${d?d.count:""} offspring (${uColors.map(colorLabel).join(" + ")})`}
+                  </strong>.
+                </p>
+                <p style={{fontSize:24,fontWeight:500,color:accent,margin:0}}>{offspring.length} new organism{offspring.length!==1?"s":""} added!</p>
+              </div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center",maxWidth:200}}>
+                {offspring.map(o=><Blob key={o.id} color={o.color} size={28} isNew/>)}
+              </div>
+            </div>
+          )}
+        </div>
+        <button onClick={handleContinue} style={{...btn(accent),fontSize:20,padding:"18px 0",borderRadius:16,display:"block",width:"100%"}}>
+          ✓ Recorded — go to Generation {nextLabel}
+        </button>
+      </div>
+    );
+  }
+
+  // ── DONE ────────────────────────────────────────────────────
+  if (phase==="done") return (
+    <div style={{padding:"2rem"}}>
+      <h1 style={{fontSize:22,fontWeight:500,marginBottom:4,color:C.text}}>Lab complete!</h1>
+      <p style={{color:C.textSec,marginBottom:24,fontSize:14}}>Here's your complete data for all 10 generations.</p>
+      <div style={card}>
+        <p style={{fontWeight:500,marginBottom:14,color:C.text,fontSize:15}}>Generation data</p>
+        <DataTables genLog={genLog}/>
+      </div>
+    </div>
+  );
+
+  // ── MAIN LAB SCREEN ─────────────────────────────────────────
+  const {pairs,nonMating}=getValidPairs(sOrgs);
+  const isDicing=phase==="dice";
+
+  return (
+    <div>
+      {/* Sticky header */}
+      <div style={{background:C.bg,borderBottom:`0.5px solid ${C.border}`,padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:10}}>
+        <span style={{fontSize:16,fontWeight:500,color:C.text}}>Reproduction Showdown</span>
+        <div style={{display:"flex",alignItems:"center",gap:14}}>
+          <span style={{fontSize:14,color:C.textSec}}>Generation {gen} of 10</span>
+          <div style={{width:120,height:6,background:C.bgTer,borderRadius:6}}>
+            <div style={{height:"100%",borderRadius:6,background:"#7F77DD",width:`${gen*10}%`,transition:"width 0.5s ease"}}/>
+          </div>
+        </div>
+      </div>
+
+      <div style={{padding:"20px 24px",maxWidth:1100,margin:"0 auto"}}>
+        {/* Population panels */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+
+          {/* Asexual */}
+          <div style={card}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div>
+                <p style={{fontWeight:500,color:"#3C3489",marginBottom:2,fontSize:15}}>Asexual Population</p>
+                <p style={{fontSize:12,color:C.textTer}}>Every organism produces 1 offspring</p>
+              </div>
+              <span style={{background:"#EEEDFE",color:"#3C3489",borderRadius:12,padding:"4px 12px",fontSize:13,fontWeight:500}}>{aCount.toLocaleString()} total</span>
+            </div>
+            <PopGrid orgs={aOrgs} total={aCount}/>
+          </div>
+
+          {/* Sexual */}
+          <div style={card}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div>
+                <p style={{fontWeight:500,color:"#0C447C",marginBottom:2,fontSize:15}}>Sexual Population</p>
+                <p style={{fontSize:12,color:C.textTer}}>Only red + blue pairs can mate</p>
+              </div>
+              <span style={{background:"#E6F1FB",color:"#0C447C",borderRadius:12,padding:"4px 12px",fontSize:13,fontWeight:500}}>{sOrgs.length} total</span>
+            </div>
+
+            {pairs.length>0&&(
+              <div style={{marginBottom:nonMating.length>0?12:0}}>
+                <p style={{fontSize:11,color:C.textTer,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Mating pairs ({pairs.length})</p>
+                <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:10}}>
+                  {pairs.map((_,i)=>(
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 12px",background:C.bgSec,borderRadius:10,border:`0.5px solid ${C.border}`}}>
+                      <Blob color="red" size={22}/>
+                      <span style={{fontSize:13,color:C.textTer,fontWeight:500}}>+</span>
+                      <Blob color="blue" size={22}/>
+                    </div>
+                  ))}
+                </div>
+                {isDicing&&(
+                  <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:C.bgSec,borderRadius:10,border:`0.5px solid ${C.borderMid}`}}>
+                    {spinning
+                      ?<><SpinDie size={44}/><span style={{fontSize:13,color:C.textSec}}>Rolling for all pairs...</span></>
+                      :singleRoll?<>
+                          <DieFace value={singleRoll} size={44}/>
+                          <div>
+                            <p style={{fontSize:13,fontWeight:500,color:C.text,margin:"0 0 3px"}}>{DICE_TABLE[singleRoll].label} — applies to all {pairs.length} pair{pairs.length!==1?"s":""}</p>
+                            {DICE_TABLE[singleRoll].count>0&&(
+                              <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                                {DICE_TABLE[singleRoll].choose
+                                  ?Array(DICE_TABLE[singleRoll].count).fill(null).map((_,k)=><span key={k} style={{width:14,height:14,borderRadius:"50%",border:`2px dashed ${C.borderMid}`,display:"inline-block"}}/>)
+                                  :Array(pairs.length).fill(null).flatMap((_,pi)=>DICE_TABLE[singleRoll].colors.map((c,k)=><Blob key={`${pi}-${k}`} color={c} size={14} isNew/>))
+                                }
+                              </div>
+                            )}
+                          </div>
+                        </>:null
+                    }
+                  </div>
+                )}
+                {!isDicing&&rollSummary&&(
+                  <div style={{padding:"8px 12px",background:"#E6F1FB",borderRadius:10,border:"0.5px solid #B5D4F4"}}>
+                    <p style={{fontSize:12,color:"#0C447C",margin:0,lineHeight:1.5}}>Last round: {rollSummary}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {pairs.length===0&&(
+              <div>
+                <p style={{fontSize:13,color:C.textTer,fontStyle:"italic",marginBottom:8}}>No red + blue pairs — no mating this generation.</p>
+                {!isDicing&&rollSummary&&(
+                  <div style={{padding:"8px 12px",background:"#E6F1FB",borderRadius:10,border:"0.5px solid #B5D4F4"}}>
+                    <p style={{fontSize:12,color:"#0C447C",margin:0}}>Last round: {rollSummary}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {nonMating.length>0&&(
+              <div style={{borderTop:`0.5px solid ${C.border}`,paddingTop:10}}>
+                <p style={{fontSize:11,color:C.textTer,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Cannot mate this generation ({nonMating.length})</p>
+                <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                  {nonMating.map(o=><Blob key={o.id} color={o.color} size={20} isNew={o.isNew}/>)}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Action area */}
+        <div style={{textAlign:"center",marginBottom:16}}>
+          {phase==="playing"&&gen<9&&(
+            <div>
+              <button style={{...btn("#534AB7"),width:"auto",padding:"14px 36px",fontSize:17}} onClick={handleNextGen}>
+                Roll the dice for Generation {gen+1} →
+              </button>
+              <p style={{fontSize:13,color:C.textTer,marginTop:8}}>This will reproduce both populations and show you the results for generation {gen+1}.</p>
+            </div>
+          )}
+          {phase==="playing"&&gen===9&&(
+            <div>
+              <button style={{...btn("#A32D2D"),width:"auto",padding:"14px 36px",fontSize:17}} onClick={handleNextGen}>
+                Roll the dice for Generation 10 →
+              </button>
+              <p style={{fontSize:13,color:"#A32D2D",marginTop:8}}>Something unexpected happens before generation 10 begins...</p>
+            </div>
+          )}
+          {isDicing&&<p style={{fontSize:14,color:C.textSec,fontWeight:500}}>{spinning?"Rolling one die for all pairs...":"Result in — same outcome applies to every pair."}</p>}
+        </div>
+
+        {/* Dice reference */}
+        <div style={{...card,marginBottom:16}}>
+          <p style={{fontWeight:500,color:C.textSec,marginBottom:14,fontSize:13}}>Dice reference table (sexual reproduction)</p>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:8}}>
+            {[1,2,3,4,5,6].map(n=>(
+              <div key={n} style={{textAlign:"center",background:C.bgSec,border:`0.5px solid ${C.border}`,borderRadius:10,padding:"10px 6px"}}>
+                <DieFace value={n} size={44}/>
+                <p style={{fontSize:11,color:C.textSec,marginTop:8,lineHeight:1.4}}>{DICE_TABLE[n].label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Data tables */}
+        <div style={card}>
+          <p style={{fontWeight:500,color:C.textSec,marginBottom:14,fontSize:13}}>Data tables — record these on your worksheet</p>
+          <DataTables genLog={genLog}/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<ReproductionLab/>, document.getElementById("root"));
+</script>
+</body>
+</html>
